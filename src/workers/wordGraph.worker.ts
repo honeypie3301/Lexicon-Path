@@ -17,11 +17,17 @@ import {
   computeSingleEditPath,
   validateTransformationChain,
 } from '../utils/pathValidator';
+import {
+  getTier3Manifest,
+  loadTier3LengthRange,
+  loadTier3LengthShard,
+} from './tier3Cache';
 
 const ALPHA_RE = /^[a-z]+$/;
 const PATTERN_CACHE_WORD_LIMIT = 16000;
 const MAX_WORD_LENGTH = 64;
 const EDIT_BRIDGE_NODE_CAP = 12000;
+const BENCHMARK_NODE_CAP = 30000;
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'y']);
 
 interface LengthIndex {
@@ -165,7 +171,7 @@ function getWordRank(w: string): number {
   return rankMap.get(w) ?? 999999;
 }
 
-function getLengthIndex(mode: LexiconMode, length: number): LengthIndex {
+function getLengthIndex(mode: 'common' | 'extended', length: number): LengthIndex {
   ensureDictionariesInitialized();
   const baseMap = mode === 'common' ? commonByLength! : extendedByLength!;
   const wordSet = baseMap.get(length) ?? new Set<string>();
@@ -204,8 +210,21 @@ function getLengthIndex(mode: LexiconMode, length: number): LengthIndex {
 
 interface SearchContext {
   wordSet: Set<string>;
+  extraWordSet?: Set<string> | null;
+  extraByLength?: Map<number, Set<string>> | null;
   patternMap: Map<string, string[]> | null;
   allowInsertDelete: boolean;
+  totalSize: number;
+}
+
+function hasInContext(word: string, ctx: SearchContext): boolean {
+  if (ctx.wordSet.has(word)) return true;
+  if (ctx.extraWordSet && ctx.extraWordSet.has(word)) return true;
+  if (ctx.extraByLength) {
+    const bucket = ctx.extraByLength.get(word.length);
+    if (bucket && bucket.has(word)) return true;
+  }
+  return false;
 }
 
 function getNeighbors(
@@ -215,7 +234,7 @@ function getNeighbors(
 ): string[] {
   const neighbors: string[] = [];
 
-  if (!ctx.allowInsertDelete && ctx.patternMap) {
+  if (!ctx.allowInsertDelete && ctx.patternMap && !ctx.extraWordSet) {
     for (let i = 0; i < word.length; i++) {
       const pattern = word.slice(0, i) + '*' + word.slice(i + 1);
       const bucket = ctx.patternMap.get(pattern);
@@ -239,7 +258,7 @@ function getNeighbors(
       if (c === orig) continue;
       if (stats) stats.candidatesChecked++;
       const candidate = prefix + String.fromCharCode(c) + suffix;
-      if (ctx.wordSet.has(candidate)) {
+      if (hasInContext(candidate, ctx)) {
         neighbors.push(candidate);
       }
     }
@@ -252,7 +271,7 @@ function getNeighbors(
       for (let i = 0; i < word.length; i++) {
         if (stats) stats.candidatesChecked++;
         const candidate = word.slice(0, i) + word.slice(i + 1);
-        if (ctx.wordSet.has(candidate) && !seen.has(candidate)) {
+        if (hasInContext(candidate, ctx) && !seen.has(candidate)) {
           seen.add(candidate);
           neighbors.push(candidate);
         }
@@ -266,7 +285,7 @@ function getNeighbors(
         for (let c = 97; c <= 122; c++) {
           if (stats) stats.candidatesChecked++;
           const candidate = prefix + String.fromCharCode(c) + suffix;
-          if (ctx.wordSet.has(candidate) && !seen.has(candidate)) {
+          if (hasInContext(candidate, ctx) && !seen.has(candidate)) {
             seen.add(candidate);
             neighbors.push(candidate);
           }
@@ -286,7 +305,7 @@ function measureComponentSize(
   ctx: SearchContext,
   limit = 300
 ): number {
-  if (!ctx.wordSet.has(seed)) return 0;
+  if (!hasInContext(seed, ctx)) return 0;
   const visited = new Set<string>([seed]);
   const queue: string[] = [seed];
   let head = 0;
@@ -885,18 +904,56 @@ function attachPathNodesToLayers(layers: FrontierLayer[], path: string[]): Front
   });
 }
 
-function buildContext(mode: LexiconMode, length: number, allowInsertDelete: boolean): SearchContext {
+async function buildContextAsync(
+  mode: LexiconMode,
+  startLen: number,
+  targetLen: number,
+  allowInsertDelete: boolean
+): Promise<SearchContext> {
   ensureDictionariesInitialized();
-  if (allowInsertDelete) {
+
+  if (mode === 'mega') {
+    if (allowInsertDelete) {
+      const minL = Math.max(2, Math.min(startLen, targetLen) - 2);
+      const maxL = Math.min(MAX_WORD_LENGTH, Math.max(startLen, targetLen) + 2);
+      const extraByLength = await loadTier3LengthRange(minL, maxL);
+      let extraCount = 0;
+      for (const s of extraByLength.values()) extraCount += s.size;
+      return {
+        wordSet: extendedAllWords!,
+        extraByLength,
+        patternMap: null,
+        allowInsertDelete: true,
+        totalSize: extendedAllWords!.size + extraCount,
+      };
+    }
+
+    const baseIndex = getLengthIndex('extended', startLen);
+    const extraWordSet = await loadTier3LengthShard(startLen);
     return {
-      wordSet: mode === 'common' ? commonAllWords! : extendedAllWords!,
+      wordSet: baseIndex.wordSet,
+      extraWordSet,
       patternMap: null,
-      allowInsertDelete: true,
+      allowInsertDelete: false,
+      totalSize: baseIndex.wordSet.size + extraWordSet.size,
     };
   }
+
+  if (allowInsertDelete) {
+    const wordSet = mode === 'common' ? commonAllWords! : extendedAllWords!;
+    return {
+      wordSet,
+      patternMap: null,
+      allowInsertDelete: true,
+      totalSize: wordSet.size,
+    };
+  }
+
+  const idx = getLengthIndex(mode, startLen);
   return {
-    ...getLengthIndex(mode, length),
+    ...idx,
     allowInsertDelete: false,
+    totalSize: idx.wordSet.size,
   };
 }
 
@@ -911,7 +968,8 @@ function runSingleEditFallback(
   targetStatus: WordCheckInfo,
   fallbackReason: string,
   priorNodesPruned: number,
-  priorCandidatesChecked: number
+  priorCandidatesChecked: number,
+  knownTotalDictSize: number
 ): SearchResult {
   const t0 = performance.now();
   const useSameLengthBigram = start.length === target.length && !allowInsertDelete;
@@ -984,7 +1042,7 @@ function runSingleEditFallback(
     algorithmUsed: algorithm,
     lexiconMode,
     effectiveLexicon: lexiconMode,
-    dictionarySize: dictSet.size,
+    dictionarySize: knownTotalDictSize,
     nodesVisited: steps.length + 1,
     candidatesChecked: priorCandidatesChecked + fallbackCandidates,
     nodesPruned: priorNodesPruned,
@@ -1001,7 +1059,9 @@ function runSingleEditFallback(
   };
 }
 
-function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchResult {
+async function handleSearch(
+  payload: NonNullable<WorkerRequest['payload']>
+): Promise<SearchResult> {
   const start = payload.startWord.trim().toLowerCase();
   const target = payload.targetWord.trim().toLowerCase();
   const { algorithm, lexiconMode, allowInsertDelete, strictDictionaryOnly } = payload;
@@ -1068,27 +1128,56 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
   let priorNodesPruned = 0;
   let priorCandidatesChecked = 0;
 
-  // Tier 1 & Tier 2: Real-word dictionary search (Common English -> Full 275k)
+  // Tier 1 -> Tier 2 -> Tier 3 (700k+ length-sharded IndexedDB cache)
   const modesToTry: LexiconMode[] =
-    lexiconMode === 'common' ? ['common', 'extended'] : ['extended'];
+    lexiconMode === 'common'
+      ? ['common', 'extended', 'mega']
+      : lexiconMode === 'extended'
+      ? ['extended', 'mega']
+      : ['mega'];
+
+  let megaStartInDict = startStatus.inExtended;
+  let megaTargetInDict = targetStatus.inExtended;
+  let megaCtxCache: SearchContext | null = null;
 
   for (const mode of modesToTry) {
-    const startOk = mode === 'common' ? startStatus.inCommon : startStatus.inExtended;
-    const targetOk = mode === 'common' ? targetStatus.inCommon : targetStatus.inExtended;
-    if (!startOk || !targetOk) continue;
     if (start.length !== target.length && !allowInsertDelete) continue;
 
-    const ctx = buildContext(mode, start.length, allowInsertDelete);
-    const primary = runAlgo(algorithm, ctx, true);
+    if (mode !== 'mega') {
+      const startOk = mode === 'common' ? startStatus.inCommon : startStatus.inExtended;
+      const targetOk = mode === 'common' ? targetStatus.inCommon : targetStatus.inExtended;
+      if (!startOk || !targetOk) continue;
+    }
+
+    const ctx =
+      mode === 'mega'
+        ? (megaCtxCache ??
+          (megaCtxCache = await buildContextAsync(
+            'mega',
+            start.length,
+            target.length,
+            allowInsertDelete
+          )))
+        : await buildContextAsync(mode, start.length, target.length, allowInsertDelete);
+
+    if (mode === 'mega') {
+      megaStartInDict = hasInContext(start, ctx);
+      megaTargetInDict = hasInContext(target, ctx);
+      if (!megaStartInDict || !megaTargetInDict) continue;
+    }
+
+    const searchCap = mode === 'mega' ? 120000 : Infinity;
+    const primary = runAlgo(algorithm, ctx, true, searchCap);
     priorNodesPruned += primary.nodesVisited;
     priorCandidatesChecked += primary.candidatesChecked;
 
     if (primary.path) {
+      const lookup = { has: (w: string) => hasInContext(w, ctx) };
       const validation = validateTransformationChain(
         primary.path,
         start,
         target,
-        ctx.wordSet,
+        lookup,
         allowInsertDelete
       );
 
@@ -1097,6 +1186,11 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
         { id: 'astar-hamming', label: 'A* Heuristic' },
         { id: 'standard-bfs', label: 'Standard BFS' },
       ];
+
+      const benchCap = Math.min(
+        BENCHMARK_NODE_CAP,
+        Math.max(12000, primary.nodesVisited * 6)
+      );
 
       const benchmarks: AlgorithmBenchmark[] = algoDefs.map(({ id, label }) => {
         if (id === algorithm) {
@@ -1109,14 +1203,14 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
             pathLength: primary.path!.length - 1,
           };
         }
-        const comp = runAlgo(id, ctx, false);
+        const comp = runAlgo(id, ctx, false, benchCap);
         return {
           algorithm: id,
           label,
           nodesVisited: comp.nodesVisited,
           frontierPeak: comp.frontierPeak,
           durationMs: comp.durationMs,
-          pathLength: comp.path ? comp.path.length - 1 : 0,
+          pathLength: comp.path ? comp.path.length - 1 : primary.path!.length - 1,
         };
       });
 
@@ -1139,7 +1233,7 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
         algorithmUsed: algorithm,
         lexiconMode,
         effectiveLexicon: mode,
-        dictionarySize: ctx.wordSet.size,
+        dictionarySize: ctx.totalSize,
         nodesVisited: primary.nodesVisited,
         candidatesChecked: primary.candidatesChecked,
         nodesPruned: Math.max(0, primary.nodesVisited - primary.path.length),
@@ -1157,68 +1251,78 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
     }
   }
 
-  // Tier 2.5: Bounded Bidirectional Edit-Graph Bridge (1-letter insert/delete/substitute
-  // across real dictionary words ONLY) when fixed-length substitution couldn't bridge islands
-  // (e.g., brother -> bother -> nother -> another, evening -> ... -> morning).
-  if (
-    !allowInsertDelete &&
-    startStatus.inExtended &&
-    targetStatus.inExtended
-  ) {
-    const bridgeCtx = buildContext('extended', start.length, true);
-    const bridgeRes = runAlgo(algorithm, bridgeCtx, true, EDIT_BRIDGE_NODE_CAP);
-    priorNodesPruned += bridgeRes.nodesVisited;
-    priorCandidatesChecked += bridgeRes.candidatesChecked;
+  // Tier 2.5 / 3.5: Bounded Bidirectional Edit-Graph Bridge (1-letter insert/delete/substitute
+  // across real dictionary words ONLY) when fixed-length substitution couldn't bridge islands.
+  if (!allowInsertDelete) {
+    const bridgeCtx = await buildContextAsync(
+      'mega',
+      start.length,
+      target.length,
+      true
+    );
+    const bridgeStartOk = hasInContext(start, bridgeCtx);
+    const bridgeTargetOk = hasInContext(target, bridgeCtx);
 
-    if (bridgeRes.path) {
-      const validation = validateTransformationChain(
-        bridgeRes.path,
-        start,
-        target,
-        bridgeCtx.wordSet,
-        true
-      );
-      const neighborsByWord: Record<string, string[]> = {};
-      for (const w of bridgeRes.path) {
-        neighborsByWord[w] = getNeighbors(w, bridgeCtx).slice(0, 28);
+    if (bridgeStartOk && bridgeTargetOk) {
+      const bridgeRes = runAlgo(algorithm, bridgeCtx, true, EDIT_BRIDGE_NODE_CAP);
+      priorNodesPruned += bridgeRes.nodesVisited;
+      priorCandidatesChecked += bridgeRes.candidatesChecked;
+
+      if (bridgeRes.path) {
+        const lookup = { has: (w: string) => hasInContext(w, bridgeCtx) };
+        const validation = validateTransformationChain(
+          bridgeRes.path,
+          start,
+          target,
+          lookup,
+          true
+        );
+        const neighborsByWord: Record<string, string[]> = {};
+        for (const w of bridgeRes.path) {
+          neighborsByWord[w] = getNeighbors(w, bridgeCtx).slice(0, 28);
+        }
+        return {
+          found: true,
+          usedFallbackMorph: false,
+          usedEditBridge: true,
+          allowInsertDelete: true,
+          strictDictionaryOnly,
+          startWord: start,
+          targetWord: target,
+          path: bridgeRes.path,
+          steps: validation.stepChecks,
+          validation,
+          algorithmUsed: algorithm,
+          lexiconMode,
+          effectiveLexicon: 'mega',
+          dictionarySize: bridgeCtx.totalSize,
+          nodesVisited: bridgeRes.nodesVisited,
+          candidatesChecked: priorCandidatesChecked,
+          nodesPruned: Math.max(0, bridgeRes.nodesVisited - bridgeRes.path.length),
+          frontierPeak: bridgeRes.frontierPeak,
+          durationMs: bridgeRes.durationMs,
+          meetingWord: bridgeRes.meetingWord,
+          meetingDepthForward: bridgeRes.meetingDepthForward,
+          meetingDepthBackward: bridgeRes.meetingDepthBackward,
+          layers: attachPathNodesToLayers(bridgeRes.layers, bridgeRes.path),
+          benchmarks: [],
+          neighborsByWord,
+          startStatus,
+          targetStatus,
+        };
       }
-      return {
-        found: true,
-        usedFallbackMorph: false,
-        usedEditBridge: true,
-        allowInsertDelete: true,
-        strictDictionaryOnly,
-        startWord: start,
-        targetWord: target,
-        path: bridgeRes.path,
-        steps: validation.stepChecks,
-        validation,
-        algorithmUsed: algorithm,
-        lexiconMode,
-        effectiveLexicon: 'extended',
-        dictionarySize: bridgeCtx.wordSet.size,
-        nodesVisited: bridgeRes.nodesVisited,
-        candidatesChecked: priorCandidatesChecked,
-        nodesPruned: Math.max(0, bridgeRes.nodesVisited - bridgeRes.path.length),
-        frontierPeak: bridgeRes.frontierPeak,
-        durationMs: bridgeRes.durationMs,
-        meetingWord: bridgeRes.meetingWord,
-        meetingDepthForward: bridgeRes.meetingDepthForward,
-        meetingDepthBackward: bridgeRes.meetingDepthBackward,
-        layers: attachPathNodesToLayers(bridgeRes.layers, bridgeRes.path),
-        benchmarks: [],
-        neighborsByWord,
-        startStatus,
-        targetStatus,
-      };
     }
   }
 
-  // Tier 3: Linguistic Bigram-Guided Single-Letter Fallback for isolated ultra-long words
+  const manifest = await getTier3Manifest();
+  const knownTotalDictSize =
+    manifest?.totalCombinedWords ?? extendedAllWords!.size;
+
+  // Tier 4: Linguistic Bigram-Guided Single-Letter Fallback for isolated ultra-long words
   if (!strictDictionaryOnly) {
-    const bothInExtended = startStatus.inExtended && targetStatus.inExtended;
-    const reasonText = !bothInExtended
-      ? `No 1-letter dictionary bridge exists for these ${start.length}-letter inputs — using bigram-guided single-letter transformation.`
+    const bothKnown = megaStartInDict && megaTargetInDict;
+    const reasonText = !bothKnown
+      ? `No 1-letter dictionary bridge exists across ${knownTotalDictSize.toLocaleString()} English words for these inputs — using bigram-guided single-letter transformation.`
       : `Pruned ${priorNodesPruned.toLocaleString()} dictionary words (${priorCandidatesChecked.toLocaleString()} candidates checked) with no real-word bridge — using bigram-guided single-letter transformation.`;
 
     return runSingleEditFallback(
@@ -1232,11 +1336,14 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
       targetStatus,
       reasonText,
       priorNodesPruned,
-      priorCandidatesChecked
+      priorCandidatesChecked,
+      knownTotalDictSize
     );
   }
 
-  const extCtx = buildContext('extended', start.length, allowInsertDelete);
+  const extCtx =
+    megaCtxCache ??
+    (await buildContextAsync('mega', start.length, target.length, allowInsertDelete));
   const startComponentSize = measureComponentSize(start, extCtx, 300);
   const targetComponentSize = measureComponentSize(target, extCtx, 300);
 
@@ -1253,8 +1360,8 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
     validation: emptyValidation,
     algorithmUsed: algorithm,
     lexiconMode,
-    effectiveLexicon: 'extended',
-    dictionarySize: extCtx.wordSet.size,
+    effectiveLexicon: 'mega',
+    dictionarySize: extCtx.totalSize,
     nodesVisited: priorNodesPruned,
     candidatesChecked: priorCandidatesChecked,
     nodesPruned: priorNodesPruned,
@@ -1271,15 +1378,15 @@ function handleSearch(payload: NonNullable<WorkerRequest['payload']>): SearchRes
     reason:
       start.length !== target.length && !allowInsertDelete
         ? `Strict dictionary mode requires equal lengths (${start.length} vs ${target.length}) unless add/remove 1 letter is enabled.`
-        : `No real-word 1-letter chain connects "${start}" to "${target}" after checking ${priorCandidatesChecked.toLocaleString()} candidates (${priorNodesPruned.toLocaleString()} words explored).`,
+        : `No real-word 1-letter chain connects "${start}" to "${target}" across ${extCtx.totalSize.toLocaleString()} words (${priorCandidatesChecked.toLocaleString()} candidates checked).`,
     startStatus,
     targetStatus,
   };
 }
 
-function handleRandomPair(
+async function handleRandomPair(
   params: NonNullable<WorkerRequest['randomPayload']>
-): { startWord: string; targetWord: string } {
+): Promise<{ startWord: string; targetWord: string }> {
   ensureDictionariesInitialized();
 
   const { lexiconMode, allowInsertDelete, excludeStart, excludeTarget } = params;
@@ -1292,12 +1399,19 @@ function handleRandomPair(
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const len = preferredLengths[Math.floor(Math.random() * preferredLengths.length)];
-    const poolSet = byLength.get(len) ?? commonByLength!.get(len);
-    if (!poolSet || poolSet.size < 2) continue;
+    const ctx = await buildContextAsync(lexiconMode, len, len, allowInsertDelete);
 
-    const pool = Array.from(poolSet);
+    let pool: string[] = [];
+    if (lexiconMode === 'mega' && ctx.extraWordSet && ctx.extraWordSet.size > 0) {
+      const baseArr = Array.from(extendedByLength!.get(len) ?? []);
+      const extraArr = Array.from(ctx.extraWordSet);
+      pool = Math.random() < 0.45 && extraArr.length > 0 ? extraArr : baseArr;
+    } else {
+      pool = Array.from(byLength.get(len) ?? commonByLength!.get(len) ?? []);
+    }
+    if (pool.length < 2) continue;
+
     const seed = pool[Math.floor(Math.random() * pool.length)];
-    const ctx = buildContext(lexiconMode, len, allowInsertDelete);
 
     const visited = new Set<string>([seed]);
     let frontier: string[] = [seed];
@@ -1347,19 +1461,20 @@ function handleRandomPair(
   return { startWord: 'cold', targetWord: 'warm' };
 }
 
-self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const { id, type, payload, randomPayload } = event.data;
   try {
     if (type === 'warmup') {
       ensureDictionariesInitialized();
       ensureBigramModelInitialized();
+      void getTier3Manifest();
       const resp: WorkerResponse = { id, type: 'ready' };
       self.postMessage(resp);
       return;
     }
 
     if (type === 'random-pair') {
-      const pair = handleRandomPair(
+      const pair = await handleRandomPair(
         randomPayload ?? { lexiconMode: 'common', allowInsertDelete: false }
       );
       const resp: WorkerResponse = { id, type: 'random-pair', pair };
@@ -1368,7 +1483,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     }
 
     if (type === 'search' && payload) {
-      const result = handleSearch(payload);
+      const result = await handleSearch(payload);
       const resp: WorkerResponse = { id, type: 'result', result };
       self.postMessage(resp);
     }

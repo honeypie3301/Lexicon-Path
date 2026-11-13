@@ -64,7 +64,7 @@ export function GraphSearchVisualizer({
           </span>
         </div>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-          Because no 1-letter real-word bridge connects these words in the 275k English
+          Because no 1-letter real-word bridge connects these words in the 700k+ English
           dictionary, the solver computes the provably shortest character-by-character edit
           alignment while keeping every step to a single-letter change.
         </p>

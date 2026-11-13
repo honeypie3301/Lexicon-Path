@@ -278,7 +278,7 @@ export function validateTransformationChain(
   path: string[],
   startWord: string,
   targetWord: string,
-  dictionarySet: Set<string>,
+  dictionarySet: { has(word: string): boolean },
   allowInsertDelete = false
 ): ValidationReport {
   const errorMessages: string[] = [];

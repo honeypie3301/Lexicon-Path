@@ -105,7 +105,13 @@ export function AlgorithmInspector({ result }: AlgorithmInspectorProps) {
                 <dt className="text-ink-muted">Active Lexicon</dt>
                 <dd className="font-mono text-ink tabular-nums">
                   {result.dictionarySize.toLocaleString()}{' '}
-                  {result.allowInsertDelete ? '(all)' : `(${result.startWord.length}-let)`}
+                  {result.effectiveLexicon === 'mega'
+                    ? result.allowInsertDelete
+                      ? '(T3 · all)'
+                      : `(T3 · ${result.startWord.length}-let)`
+                    : result.allowInsertDelete
+                    ? '(all)'
+                    : `(${result.startWord.length}-let)`}
                 </dd>
               </div>
             </>

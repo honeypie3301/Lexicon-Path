@@ -305,18 +305,19 @@ export function WordInputBar({
                 {/* Dictionary Scope */}
                 <div className="space-y-1.5 border-t border-line-soft pt-3">
                   <div className="text-xs font-semibold text-ink">Preferred Lexicon</div>
-                  <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-alt p-1">
+                  <div className="grid grid-cols-3 gap-1 rounded-lg bg-surface-alt p-1">
                     {(
                       [
-                        { id: 'common', label: 'Common English' },
-                        { id: 'extended', label: 'Full 275k' },
+                        { id: 'common', label: 'Common' },
+                        { id: 'extended', label: '275k' },
+                        { id: 'mega', label: '700k+' },
                       ] as const
                     ).map((item) => (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => onLexiconChange(item.id)}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                        className={`rounded-md px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
                           lexiconMode === item.id
                             ? 'bg-surface text-ink shadow-xs'
                             : 'text-ink-muted hover:text-ink'

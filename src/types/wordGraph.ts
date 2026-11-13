@@ -1,6 +1,6 @@
 export type AlgorithmId = 'bidirectional-bfs' | 'astar-hamming' | 'standard-bfs';
 
-export type LexiconMode = 'common' | 'extended';
+export type LexiconMode = 'common' | 'extended' | 'mega';
 
 export type UiDesignId = 'archival' | 'editorial' | 'blueprint' | 'terminal';
 
