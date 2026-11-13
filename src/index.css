@@ -68,6 +68,38 @@
   --ui-cta-ink: #fffdf9;
 }
 
+[data-ui-theme="archival-dark"] {
+  color-scheme: dark;
+  --ui-font-display: "Fraunces", ui-serif, Georgia, serif;
+  --ui-canvas: #13100e;
+  --ui-surface: #1b1613;
+  --ui-surface-alt: #241e19;
+  --ui-line: #342b24;
+  --ui-line-soft: #28211b;
+  --ui-ink: #f4ede2;
+  --ui-ink-muted: #cbbba8;
+  --ui-ink-subtle: #968574;
+
+  --ui-accent: #d9822b;
+  --ui-accent-hover: #e59a47;
+  --ui-accent-soft: #2c1f11;
+  --ui-accent-ink: #14100d;
+  --ui-accent-text: #f3bf73;
+  --ui-accent-border: #6e471b;
+
+  --ui-good-text: #6ee7b7;
+  --ui-good-soft: #0e241c;
+  --ui-good-border: #1d4a3a;
+
+  --ui-warn-text: #fca5a5;
+  --ui-warn-soft: #2b1414;
+  --ui-warn-border: #632626;
+
+  --ui-cta: #e6c79c;
+  --ui-cta-hover: #f2dab8;
+  --ui-cta-ink: #16120f;
+}
+
 [data-ui-theme="editorial"] {
   color-scheme: light;
   --ui-font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
@@ -203,6 +235,7 @@
   }
 
   .dark body,
+  [data-ui-theme="archival-dark"] body,
   [data-ui-theme="blueprint"] body,
   [data-ui-theme="terminal"] body {
     letter-spacing: 0.01em;

@@ -2,7 +2,7 @@ export type AlgorithmId = 'bidirectional-bfs' | 'astar-hamming' | 'standard-bfs'
 
 export type LexiconMode = 'common' | 'extended' | 'mega';
 
-export type UiDesignId = 'archival' | 'editorial' | 'blueprint' | 'terminal';
+export type UiDesignId = 'archival' | 'archival-dark' | 'editorial' | 'blueprint' | 'terminal';
 
 export interface TransitionStep {
   stepNumber: number;

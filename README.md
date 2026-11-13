@@ -17,7 +17,7 @@
   - **Step Sequence**: Clickable list of every intermediate state with inline letter-change highlighting.
   - **Graph Search Explorer**: Inspects forward/backward frontier layers, the bidirectional meeting word, and 1-letter dictionary branches (click any neighbor to re-root the search).
   - **Telemetry, Comparison & Audit**: Tracks candidates checked, nodes visited/pruned, peak frontier, compute time, side-by-side efficiency bars with plain-English algorithm explanations, and a strict per-step validation audit.
-- **Random Discovery & UI Themes**: **Try Another Pair** samples random reachable English pairs from the active dictionary, and **Settings** provides 4 themes (**Warm Archival** default, **Editorial Paper**, **Blueprint Slate**, and **Terminal Mono**) alongside algorithm and rule controls.
+- **Random Discovery & UI Themes**: **Try Another Pair** samples random reachable English pairs from the active dictionary, and **Settings** provides 5 themes (**Warm Archival** default, **Archival Dusk**, **Editorial Paper**, **Blueprint Slate**, and **Terminal Mono**) alongside algorithm and rule controls.
 
 ## Development
 

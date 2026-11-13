@@ -32,6 +32,7 @@ export const UI_DESIGNS: Array<{
   swatchAccent: string;
 }> = [
   { id: 'archival', label: 'Warm Archival', swatchBg: '#f9f6f0', swatchAccent: '#b45309' },
+  { id: 'archival-dark', label: 'Archival Dusk', swatchBg: '#1b1613', swatchAccent: '#d9822b' },
   { id: 'editorial', label: 'Editorial Paper', swatchBg: '#f8fafc', swatchAccent: '#0284c7' },
   { id: 'blueprint', label: 'Blueprint Slate', swatchBg: '#0b1120', swatchAccent: '#38bdf8' },
   { id: 'terminal', label: 'Terminal Mono', swatchBg: '#09090b', swatchAccent: '#10b981' },

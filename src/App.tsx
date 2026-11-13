@@ -21,6 +21,7 @@ function getInitialUiDesign(): UiDesignId {
     const saved = window.localStorage.getItem(UI_DESIGN_STORAGE_KEY);
     if (
       saved === 'archival' ||
+      saved === 'archival-dark' ||
       saved === 'editorial' ||
       saved === 'blueprint' ||
       saved === 'terminal'
@@ -55,7 +56,11 @@ export default function App() {
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-ui-theme', uiDesign);
-    if (uiDesign === 'blueprint' || uiDesign === 'terminal') {
+    if (
+      uiDesign === 'archival-dark' ||
+      uiDesign === 'blueprint' ||
+      uiDesign === 'terminal'
+    ) {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
