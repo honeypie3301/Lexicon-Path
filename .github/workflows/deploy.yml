@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
+      - name: Lint TypeScript
+        run: npm run lint
+      - name: Build
+        run: npm run build:static
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Remove previous Pages artifacts for this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          artifact_ids="$(gh api --paginate "repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[] | select(.name == "github-pages") | .id' || true)"
+          while IFS= read -r artifact_id; do
+            if [ -n "$artifact_id" ]; then
+              gh api --method DELETE "repos/${GH_REPO}/actions/artifacts/${artifact_id}" || true
+            fi
+          done <<< "$artifact_ids"
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,6 @@
+{
+  "name": "Lexicon Path — Letter-by-Letter Word Transformation Explorer",
+  "description": "Explore how one English word transforms into another one letter at a time using Bidirectional BFS, A* Hamming search, and strict step-by-step validation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
