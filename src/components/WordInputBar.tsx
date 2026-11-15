@@ -115,7 +115,7 @@ export function WordInputBar({
       aria-label="Word transformation inputs"
       className="rounded-xl border border-line bg-surface p-4 transition-colors"
     >
-      <form onSubmit={handleFormSubmit} className="space-y-3">
+      <form onSubmit={handleFormSubmit} className="relative space-y-3">
         <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[1fr_auto_1fr_auto] lg:items-end">
           <div>
             <label
@@ -222,7 +222,7 @@ export function WordInputBar({
             })}
           </div>
 
-          <div className="relative" ref={dropdownRef}>
+          <div className="sm:relative" ref={dropdownRef}>
             <button
               type="button"
               onClick={() => setSettingsOpen((prev) => !prev)}
@@ -243,7 +243,7 @@ export function WordInputBar({
               <div
                 role="dialog"
                 aria-label="Advanced settings and UI design"
-                className="absolute right-0 z-30 mt-2 w-[320px] sm:w-[360px] rounded-xl border border-line bg-surface p-4 shadow-lg space-y-3.5"
+                className="absolute left-0 right-0 sm:left-auto sm:right-0 z-30 mt-2 sm:w-[360px] rounded-xl border border-line bg-surface p-4 shadow-lg space-y-3.5"
               >
                 {/* UI Design */}
                 <div className="space-y-1.5">
