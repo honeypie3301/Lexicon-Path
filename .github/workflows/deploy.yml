@@ -16,10 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -57,6 +54,30 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Pages artifact indexing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          for attempt in $(seq 1 15); do
+            count="$(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" --jq '[.artifacts[] | select(.name == "github-pages" and (.expired | not))] | length' 2>/dev/null || echo 0)"
+            if [ "${count:-0}" -ge 1 ]; then
+              echo "Found ${count} github-pages artifact(s) on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Waiting for github-pages artifact metadata (attempt ${attempt}/15)..."
+            sleep 2
+          done
+          echo "Proceeding to deploy-pages after polling window."
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
